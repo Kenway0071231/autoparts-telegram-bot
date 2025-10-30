@@ -3,8 +3,9 @@ import os
 import re
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, 
+from telegram.ext import (Updater, CommandHandler, MessageHandler, 
                          ConversationHandler, CallbackContext)
+from telegram.ext import filters
 
 # Настройка логирования
 logging.basicConfig(
@@ -521,28 +522,28 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CITY: [MessageHandler(Filters.text & ~Filters.command, get_city)],
-            CAR_BRAND: [MessageHandler(Filters.text & ~Filters.command, get_car_brand)],
-            CAR_MODEL: [MessageHandler(Filters.text & ~Filters.command, get_car_model)],
-            CAR_YEAR: [MessageHandler(Filters.text & ~Filters.command, get_car_year)],
+            CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_city)],
+            CAR_BRAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_brand)],
+            CAR_MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_model)],
+            CAR_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_year)],
             VIN_OR_STS: [
-                MessageHandler(Filters.text & ~Filters.command, handle_vin_choice),
-                MessageHandler(Filters.photo, handle_vin_photo)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_vin_choice),
+                MessageHandler(filters.PHOTO, handle_vin_photo)
             ],
-            VIN_TEXT: [MessageHandler(Filters.text & ~Filters.command, get_vin_text)],
-            ENGINE_VOLUME: [MessageHandler(Filters.text & ~Filters.command, get_engine_volume)],
-            ENGINE_FUEL: [MessageHandler(Filters.text & ~Filters.command, get_fuel_type)],
-            PART_MAIN: [MessageHandler(Filters.text & ~Filters.command, get_part_main)],
-            PART_REFINEMENT: [MessageHandler(Filters.text & ~Filters.command, handle_part_refinement)],
-            PART_SPECIFICS: [MessageHandler(Filters.text & ~Filters.command, get_part_specifics)],
+            VIN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_vin_text)],
+            ENGINE_VOLUME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_engine_volume)],
+            ENGINE_FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel_type)],
+            PART_MAIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_main)],
+            PART_REFINEMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_refinement)],
+            PART_SPECIFICS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_specifics)],
             PART_PHOTO: [
-                MessageHandler(Filters.text & ~Filters.command, handle_part_photo),
-                MessageHandler(Filters.photo, handle_part_photo)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_photo),
+                MessageHandler(filters.PHOTO, handle_part_photo)
             ],
-            MORE_PARTS: [MessageHandler(Filters.text & ~Filters.command, handle_more_parts)],
-            CONTACT_INFO: [MessageHandler(Filters.text & ~Filters.command, get_contact_info)],
-            CONFIRMATION: [MessageHandler(Filters.text & ~Filters.command, handle_confirmation)],
-            EDIT_CHOICE: [MessageHandler(Filters.text & ~Filters.command, handle_edit_choice)],
+            MORE_PARTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_more_parts)],
+            CONTACT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_contact_info)],
+            CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation)],
+            EDIT_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_choice)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
