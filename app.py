@@ -1,19 +1,24 @@
 import logging
 import os
+import re
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, 
                          ConversationHandler, CallbackContext)
-import re
-from datetime import datetime
 
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # Получаем токен из переменных окружения
-BOT_TOKEN = os.environ.get('BOT_TOKEN', "8353365491:AAH_yJZT9IRdnb8Z3OwwpaGWvRv_h-bC9Ig")
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+if not BOT_TOKEN:
+    logger.error("❌ BOT_TOKEN не установлен!")
+    exit(1)
+
 ADMIN_CHAT_ID = "1079922982"
 
 # Состояния диалога
@@ -29,25 +34,29 @@ class Database:
             order_data['status'] = 'new'
             
             # Логируем заказ
-            print(f"📦 НОВЫЙ ЗАКАЗ #{order_data['order_id']}")
-            print(f"📍 Город: {order_data['city']}")
-            print(f"🚗 Авто: {order_data['car_brand']} {order_data['car_model']} {order_data['car_year']}")
+            logger.info(f"📦 НОВЫЙ ЗАКАЗ #{order_data['order_id']}")
+            logger.info(f"📍 Город: {order_data['city']}")
+            logger.info(f"🚗 Авто: {order_data['car_brand']} {order_data['car_model']} {order_data['car_year']}")
+            
             if not order_data.get('vin_skipped', True):
                 if order_data.get('vin_text'):
-                    print(f"🔢 ВИН/СТС: {order_data['vin_text']}")
+                    logger.info(f"🔢 ВИН/СТС: {order_data['vin_text']}")
                 elif order_data.get('vin_photo'):
-                    print(f"🔢 ВИН/СТС: 📷 (есть фото)")
+                    logger.info(f"🔢 ВИН/СТС: 📷 (есть фото)")
             else:
-                print(f"⚙️ Двигатель: {order_data.get('engine_volume', '')} {order_data.get('fuel_type', '')}")
-            print(f"👤 Контакт: {order_data['contact_name']} {order_data['contact_phone']}")
-            print(f"🔧 Запчасти: {len(order_data['parts'])} шт.")
-            for i, part in enumerate(order_data['parts'], 1):
-                print(f"  {i}. {part['name']} - {part.get('details', '')}")
-            print("=" * 50)
+                logger.info(f"⚙️ Двигатель: {order_data.get('engine_volume', '')} {order_data.get('fuel_type', '')}")
             
+            logger.info(f"👤 Контакт: {order_data['contact_name']} {order_data['contact_phone']}")
+            logger.info(f"🔧 Запчасти: {len(order_data['parts'])} шт.")
+            
+            for i, part in enumerate(order_data['parts'], 1):
+                logger.info(f"  {i}. {part['name']} - {part.get('details', '')}")
+            
+            logger.info("=" * 50)
             return order_data['order_id']
+            
         except Exception as e:
-            print(f"Ошибка сохранения: {e}")
+            logger.error(f"Ошибка сохранения: {e}")
             return None
 
 db = Database()
@@ -244,7 +253,6 @@ def handle_part_refinement(update: Update, context: CallbackContext):
         return PART_PHOTO
     else:  # Пропустить
         context.user_data['current_part']['details'] = 'Без уточнений'
-        # Добавляем запчасть и сразу переходим к вопросу о добавлении еще запчастей
         context.user_data['parts'].append(context.user_data['current_part'])
         return ask_more_parts(update, context)
 
@@ -336,7 +344,7 @@ def get_contact_info(update: Update, context: CallbackContext):
             return show_summary(update, context)
         
     except Exception as e:
-        print(f"Ошибка обработки контактов: {e}")
+        logger.error(f"Ошибка обработки контактов: {e}")
         update.message.reply_text("❌ Укажите имя и номер телефона через пробел. Пример: *Иван +79165133244*", parse_mode='Markdown')
         return CONTACT_INFO
 
@@ -379,7 +387,7 @@ def handle_confirmation(update: Update, context: CallbackContext):
                 reply_markup=ReplyKeyboardRemove()
             )
             
-            # Отправка уведомления администратору с пересылкой фото
+            # Отправка уведомления администратору
             admin_text = f"🚨 НОВАЯ ЗАЯВКА #{order_id}\n"
             admin_text += f"📍 Город: {context.user_data['city']}\n"
             admin_text += f"🚗 Авто: {context.user_data['car_brand']} {context.user_data['car_model']} {context.user_data['car_year']}\n"
@@ -463,7 +471,6 @@ def handle_edit_choice(update: Update, context: CallbackContext):
         return CAR_YEAR
     elif choice == '🔢 вин/Двигатель':
         context.user_data['editing'] = True
-        # Сбрасываем данные вин/двигателя
         context.user_data.pop('vin_text', None)
         context.user_data.pop('vin_photo', None)
         context.user_data.pop('engine_volume', None)
@@ -495,10 +502,13 @@ def cancel(update: Update, context: CallbackContext):
     update.message.reply_text("Диалог прерван. Напишите /start", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+def error_handler(update: Update, context: CallbackContext):
+    logger.error(f"Ошибка: {context.error}", exc_info=context.error)
+
 def main():
     """Запуск бота"""
     if not BOT_TOKEN:
-        print("❌ Ошибка: BOT_TOKEN не установлен!")
+        logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
         return
     
     # Создаем Updater и передаем ему токен бота
@@ -538,9 +548,10 @@ def main():
     )
     
     dp.add_handler(conv_handler)
+    dp.add_error_handler(error_handler)
     
     # Запускаем бота
-    print("🤖 Бот 'АвтоЗапчасти 24/7' запущен на Render...")
+    logger.info("🤖 Бот 'АвтоЗапчасти 24/7' запущен...")
     updater.start_polling()
     updater.idle()
 
