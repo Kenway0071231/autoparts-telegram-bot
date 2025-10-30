@@ -512,8 +512,8 @@ def main():
         logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
         return
     
-    # Создаем Updater и передаем ему токен бота
-    updater = Updater(BOT_TOKEN, use_context=True)
+    # Создаем Updater и передаем ему токен бота (use_context больше не нужен)
+    updater = Updater(BOT_TOKEN)
     
     # Получаем диспетчер для регистрации обработчиков
     dp = updater.dispatcher
