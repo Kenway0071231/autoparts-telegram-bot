@@ -2,10 +2,10 @@ import logging
 import os
 import re
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (Application, CommandHandler, MessageHandler, 
-                         ConversationHandler, CallbackContext, ContextTypes)
+                         ConversationHandler, CallbackContext)
 from telegram.ext import filters
 
 # Настройка логирования
@@ -31,43 +31,8 @@ ADMIN_CHAT_ID = "1079922982"
 # Хранилище для напоминаний
 user_reminders = {}
 
-class Database:
-    def save_order(self, order_data):
-        # Теперь просто логируем, без сохранения на сервере
-        try:
-            order_data['order_id'] = int(datetime.now().timestamp())
-            order_data['created_at'] = datetime.now().isoformat()
-            
-            # Логируем заказ
-            logger.info(f"📦 НОВЫЙ ЗАКАЗ #{order_data['order_id']}")
-            logger.info(f"📍 Город: {order_data['city']}")
-            logger.info(f"🚗 Авто: {order_data['car_brand']} {order_data['car_model']} {order_data['car_year']}")
-            
-            if not order_data.get('vin_skipped', True):
-                if order_data.get('vin_text'):
-                    logger.info(f"🔢 ВИН/СТС: {order_data['vin_text']}")
-                elif order_data.get('vin_photo'):
-                    logger.info(f"🔢 ВИН/СТС: 📷 (есть фото)")
-            else:
-                # ИСПРАВЛЕНО: было data, теперь order_data
-                logger.info(f"⚙️ Двигатель: {order_data.get('engine_volume', '')} {order_data.get('fuel_type', '')}")
-            
-            logger.info(f"👤 Контакт: {order_data['contact_name']} {order_data['contact_phone']}")
-            logger.info(f"🔧 Запчасти: {len(order_data['parts'])} шт.")
-            
-            for i, part in enumerate(order_data['parts'], 1):
-                logger.info(f"  {i}. {part['name']} - {part.get('details', '')}")
-            
-            logger.info("=" * 50)
-            return order_data['order_id']
-            
-        except Exception as e:
-            logger.error(f"Ошибка сохранения: {e}")
-            return None
-
-db = Database()
-
 async def start(update: Update, context: CallbackContext):
+    """Начало диалога, сбрасывает все состояния"""
     # Останавливаем все напоминания для этого пользователя
     user_id = update.effective_user.id
     if user_id in user_reminders:
@@ -75,6 +40,7 @@ async def start(update: Update, context: CallbackContext):
             task.cancel()
         del user_reminders[user_id]
     
+    # Полностью очищаем данные пользователя
     context.user_data.clear()
     
     welcome_text = """
@@ -85,7 +51,7 @@ async def start(update: Update, context: CallbackContext):
 
 *Давайте начнем! Из какого вы города?*
     """
-    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    await update.message.reply_text(welcome_text, parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
     
     # Запускаем напоминания
     await schedule_reminders(update, context)
@@ -128,6 +94,7 @@ async def send_reminder(context: CallbackContext, user_id: int, chat_id: int, de
         logger.error(f"Ошибка отправки напоминания: {e}")
 
 async def get_city(update: Update, context: CallbackContext):
+    """Получение города"""
     context.user_data['city'] = update.message.text
     if context.user_data.get('editing'):
         del context.user_data['editing']
@@ -137,6 +104,7 @@ async def get_city(update: Update, context: CallbackContext):
         return CAR_BRAND
 
 async def get_car_brand(update: Update, context: CallbackContext):
+    """Получение марки автомобиля"""
     context.user_data['car_brand'] = update.message.text
     if context.user_data.get('editing'):
         del context.user_data['editing']
@@ -146,6 +114,7 @@ async def get_car_brand(update: Update, context: CallbackContext):
         return CAR_MODEL
 
 async def get_car_model(update: Update, context: CallbackContext):
+    """Получение модели автомобиля"""
     context.user_data['car_model'] = update.message.text
     if context.user_data.get('editing'):
         del context.user_data['editing']
@@ -155,6 +124,7 @@ async def get_car_model(update: Update, context: CallbackContext):
         return CAR_YEAR
 
 async def get_car_year(update: Update, context: CallbackContext):
+    """Получение года выпуска"""
     year = update.message.text
     if not year.isdigit() or int(year) < 1950 or int(year) > 2030:
         await update.message.reply_text("❌ Укажите корректный год (например: 2018):")
@@ -179,6 +149,7 @@ async def get_car_year(update: Update, context: CallbackContext):
         return VIN_OR_STS
 
 async def handle_vin_choice(update: Update, context: CallbackContext):
+    """Обработка выбора варианта ввода VIN/СТС"""
     choice = update.message.text
     
     if choice == '📝 Ввести вин/стс вручную':
@@ -206,6 +177,7 @@ async def handle_vin_choice(update: Update, context: CallbackContext):
         return ENGINE_VOLUME
 
 async def get_vin_text(update: Update, context: CallbackContext):
+    """Получение VIN текстом"""
     context.user_data['vin_text'] = update.message.text
     context.user_data['vin_skipped'] = False
     if context.user_data.get('editing'):
@@ -215,6 +187,7 @@ async def get_vin_text(update: Update, context: CallbackContext):
         return await ask_parts(update, context)
 
 async def handle_vin_photo(update: Update, context: CallbackContext):
+    """Обработка фото VIN/СТС"""
     if update.message.photo:
         photo_file = await update.message.photo[-1].get_file()
         context.user_data['vin_photo'] = photo_file.file_id
@@ -229,25 +202,38 @@ async def handle_vin_photo(update: Update, context: CallbackContext):
         return VIN_OR_STS
 
 async def get_engine_volume(update: Update, context: CallbackContext):
+    """Получение объема двигателя"""
     if update.message.text == '📝 Другой объем':
         await update.message.reply_text("⚙️ *Введите объем двигателя:* (например: 1.4 или 2.0)", 
                                       parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
         return ENGINE_VOLUME
+    
+    # Проверяем, что введен корректный объем
+    volume_text = update.message.text.replace(',', '.').strip()
+    try:
+        volume = float(volume_text)
+        if volume <= 0 or volume > 10:
+            await update.message.reply_text("❌ Укажите корректный объем двигателя (например: 1.6 или 2.0):")
+            return ENGINE_VOLUME
+    except ValueError:
+        await update.message.reply_text("❌ Укажите объем в цифрах (например: 1.6 или 2.0):")
+        return ENGINE_VOLUME
+    
+    context.user_data['engine_volume'] = update.message.text
+    if context.user_data.get('editing'):
+        del context.user_data['editing']
+        return await show_summary(update, context)
     else:
-        context.user_data['engine_volume'] = update.message.text
-        if context.user_data.get('editing'):
-            del context.user_data['editing']
-            return await show_summary(update, context)
-        else:
-            keyboard = [['⛽ Бензин', '⛽ Дизель'], ['⚡ Гибрид', '🔋 Электро']]
-            await update.message.reply_text(
-                "⛽ *Тип топлива?*",
-                parse_mode='Markdown',
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-            )
-            return ENGINE_FUEL
+        keyboard = [['⛽ Бензин', '⛽ Дизель'], ['⚡ Гибрид', '🔋 Электро']]
+        await update.message.reply_text(
+            "⛽ *Тип топлива?*",
+            parse_mode='Markdown',
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+        )
+        return ENGINE_FUEL
 
 async def get_fuel_type(update: Update, context: CallbackContext):
+    """Получение типа топлива"""
     context.user_data['fuel_type'] = update.message.text
     if context.user_data.get('editing'):
         del context.user_data['editing']
@@ -256,6 +242,7 @@ async def get_fuel_type(update: Update, context: CallbackContext):
         return await ask_parts(update, context)
 
 async def ask_parts(update: Update, context: CallbackContext):
+    """Начало ввода запчастей"""
     context.user_data['parts'] = []
     
     text = """
@@ -274,6 +261,7 @@ async def ask_parts(update: Update, context: CallbackContext):
     return PART_MAIN
 
 async def get_part_main(update: Update, context: CallbackContext):
+    """Получение основной информации о запчасти"""
     context.user_data['current_part'] = {'name': update.message.text, 'details': ''}
     
     keyboard = [
@@ -290,6 +278,7 @@ async def get_part_main(update: Update, context: CallbackContext):
     return PART_REFINEMENT
 
 async def handle_part_refinement(update: Update, context: CallbackContext):
+    """Обработка уточнений по запчасти"""
     choice = update.message.text
     
     if choice == '✅ Знаю артикул/модель':
@@ -309,10 +298,12 @@ async def handle_part_refinement(update: Update, context: CallbackContext):
         return await ask_more_parts(update, context)
 
 async def get_part_specifics(update: Update, context: CallbackContext):
+    """Получение спецификаций запчасти"""
     context.user_data['current_part']['details'] = update.message.text
     return await ask_part_photo(update, context)
 
 async def ask_part_photo(update: Update, context: CallbackContext):
+    """Запрос фото запчасти"""
     keyboard = [['📷 Приложить фото'], ['🚀 Без фото']]
     
     part_info = f"*{context.user_data['current_part']['name']}*"
@@ -328,6 +319,7 @@ async def ask_part_photo(update: Update, context: CallbackContext):
     return PART_PHOTO
 
 async def handle_part_photo(update: Update, context: CallbackContext):
+    """Обработка фото запчасти"""
     if update.message.text == '🚀 Без фото':
         context.user_data['parts'].append(context.user_data['current_part'])
         return await ask_more_parts(update, context)
@@ -341,6 +333,7 @@ async def handle_part_photo(update: Update, context: CallbackContext):
         return PART_PHOTO
 
 async def ask_more_parts(update: Update, context: CallbackContext):
+    """Запрос на добавление еще запчастей"""
     keyboard = [['✅ Добавить еще'], ['❌ Это все']]
     count = len(context.user_data['parts'])
     await update.message.reply_text(
@@ -350,6 +343,7 @@ async def ask_more_parts(update: Update, context: CallbackContext):
     return MORE_PARTS
 
 async def handle_more_parts(update: Update, context: CallbackContext):
+    """Обработка ответа о добавлении запчастей"""
     if update.message.text == '✅ Добавить еще':
         await update.message.reply_text("Укажите следующую запчасть:", reply_markup=ReplyKeyboardRemove())
         return PART_MAIN
@@ -366,6 +360,7 @@ async def handle_more_parts(update: Update, context: CallbackContext):
             return CONTACT_INFO
 
 async def get_contact_info(update: Update, context: CallbackContext):
+    """Получение контактной информации"""
     try:
         parts = update.message.text.strip().split()
         
@@ -401,6 +396,7 @@ async def get_contact_info(update: Update, context: CallbackContext):
         return CONTACT_INFO
 
 async def show_summary(update: Update, context: CallbackContext):
+    """Показать сводку заказа"""
     data = context.user_data
     text = f"📋 *СВОДКА ЗАКАЗА*\n\n📍 *Город:* {data['city']}\n🚗 *Авто:* {data['car_brand']} {data['car_model']} {data['car_year']}\n"
     
@@ -430,6 +426,7 @@ async def show_summary(update: Update, context: CallbackContext):
     return CONFIRMATION
 
 async def handle_confirmation(update: Update, context: CallbackContext):
+    """Обработка подтверждения заказа"""
     if update.message.text == '🚀 Отправить заявку':
         # Останавливаем напоминания
         user_id = update.effective_user.id
@@ -512,6 +509,7 @@ async def handle_confirmation(update: Update, context: CallbackContext):
         return EDIT_CHOICE
 
 async def handle_edit_choice(update: Update, context: CallbackContext):
+    """Обработка выбора редактирования"""
     choice = update.message.text
     
     if choice == '↩️ Назад к сводке':
@@ -562,6 +560,7 @@ async def handle_edit_choice(update: Update, context: CallbackContext):
         return CONTACT_INFO
 
 async def cancel(update: Update, context: CallbackContext):
+    """Отмена диалога"""
     # Останавливаем напоминания
     user_id = update.effective_user.id
     if user_id in user_reminders:
@@ -572,8 +571,25 @@ async def cancel(update: Update, context: CallbackContext):
     await update.message.reply_text("Диалог прерван. Напишите /start для начала нового заказа", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+async def fallback_handler(update: Update, context: CallbackContext):
+    """Обработчик непредвиденных сообщений"""
+    await update.message.reply_text(
+        "🤔 Я вас не понял. Пожалуйста, используйте кнопки или введите корректные данные.\n\n"
+        "Если хотите начать заново, напишите /start",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    # Возвращаем текущее состояние, чтобы остаться в том же месте
+    return context.user_data.get('conversation_state', CITY)
+
 async def error_handler(update: Update, context: CallbackContext):
+    """Обработчик ошибок"""
     logger.error(f"Ошибка: {context.error}", exc_info=context.error)
+    
+    if update and update.message:
+        await update.message.reply_text(
+            "❌ Произошла ошибка. Пожалуйста, напишите /start чтобы начать заново.",
+            reply_markup=ReplyKeyboardRemove()
+        )
 
 def main():
     """Запуск бота"""
@@ -581,44 +597,93 @@ def main():
         logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
         return
     
-    # Создаем Application вместо Updater
+    # Создаем Application
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Настраиваем обработчики
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_city)],
-            CAR_BRAND: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_brand)],
-            CAR_MODEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_model)],
-            CAR_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_year)],
+            CITY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_city),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            CAR_BRAND: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_brand),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            CAR_MODEL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_model),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            CAR_YEAR: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_year),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
             VIN_OR_STS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_vin_choice),
-                MessageHandler(filters.PHOTO, handle_vin_photo)
+                MessageHandler(filters.PHOTO, handle_vin_photo),
+                MessageHandler(filters.ALL, fallback_handler)
             ],
-            VIN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_vin_text)],
-            ENGINE_VOLUME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_engine_volume)],
-            ENGINE_FUEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel_type)],
-            PART_MAIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_main)],
-            PART_REFINEMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_refinement)],
-            PART_SPECIFICS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_specifics)],
+            VIN_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_vin_text),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            ENGINE_VOLUME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_engine_volume),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            ENGINE_FUEL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel_type),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            PART_MAIN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_main),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            PART_REFINEMENT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_refinement),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            PART_SPECIFICS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_specifics),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
             PART_PHOTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_photo),
-                MessageHandler(filters.PHOTO, handle_part_photo)
+                MessageHandler(filters.PHOTO, handle_part_photo),
+                MessageHandler(filters.ALL, fallback_handler)
             ],
-            MORE_PARTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_more_parts)],
-            CONTACT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_contact_info)],
-            CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation)],
-            EDIT_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_choice)],
+            MORE_PARTS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_more_parts),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            CONTACT_INFO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, get_contact_info),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            CONFIRMATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
+            EDIT_CHOICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_choice),
+                MessageHandler(filters.ALL, fallback_handler)
+            ],
         },
         fallbacks=[
             CommandHandler('start', start),
-            CommandHandler('cancel', cancel)
-        ]
+            CommandHandler('cancel', cancel),
+            MessageHandler(filters.ALL, fallback_handler)
+        ],
+        allow_reentry=True
     )
     
     application.add_handler(conv_handler)
     application.add_error_handler(error_handler)
+    
+    # Добавляем глобальный обработчик команды /start
+    application.add_handler(CommandHandler("start", start))
     
     # Запускаем бота
     logger.info("🤖 Бот 'АвтоЗапчасти 24/7' запущен...")
