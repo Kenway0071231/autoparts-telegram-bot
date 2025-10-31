@@ -184,7 +184,13 @@ async def get_vin_text(update: Update, context: CallbackContext):
         del context.user_data['editing']
         return await show_summary(update, context)
     else:
-        return await ask_parts(update, context)
+        keyboard = [['1.0', '1.5', '1.6', '1.8'], ['2.0', '2.2', '2.5', '3.0'], ['📝 Другой объем']]
+        await update.message.reply_text(
+            "⚙️ *Какой объем двигателя?* (в литрах)",
+            parse_mode='Markdown',
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+        )
+        return ENGINE_VOLUME
 
 async def handle_vin_photo(update: Update, context: CallbackContext):
     """Обработка фото VIN/СТС"""
@@ -196,7 +202,13 @@ async def handle_vin_photo(update: Update, context: CallbackContext):
             del context.user_data['editing']
             return await show_summary(update, context)
         else:
-            return await ask_parts(update, context)
+            keyboard = [['1.0', '1.5', '1.6', '1.8'], ['2.0', '2.2', '2.5', '3.0'], ['📝 Другой объем']]
+            await update.message.reply_text(
+                "⚙️ *Какой объем двигателя?* (в литрах)",
+                parse_mode='Markdown',
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+            )
+            return ENGINE_VOLUME
     else:
         await update.message.reply_text("📷 Пожалуйста, прикрепите фото вин/стс или выберите другую опцию")
         return VIN_OR_STS
@@ -400,13 +412,16 @@ async def show_summary(update: Update, context: CallbackContext):
     data = context.user_data
     text = f"📋 *СВОДКА ЗАКАЗА*\n\n📍 *Город:* {data['city']}\n🚗 *Авто:* {data['car_brand']} {data['car_model']} {data['car_year']}\n"
     
+    # Всегда показываем двигатель, если есть данные
+    if data.get('engine_volume') and data.get('fuel_type'):
+        text += f"⚙️ *Двигатель:* {data['engine_volume']} {data['fuel_type']}\n"
+
+    # Показываем VIN/СТС если они есть
     if not data.get('vin_skipped', True):
         if data.get('vin_text'):
-            text += f"🔢 *вин/стс:* {data['vin_text']}\n"
+            text += f"🔢 *VIN/СТС:* {data['vin_text']}\n"
         elif data.get('vin_photo'):
-            text += f"🔢 *вин/стс:* 📷 (есть фото)\n"
-    else:
-        text += f"⚙️ *Двигатель:* {data.get('engine_volume', '')} {data.get('fuel_type', '')}\n"
+            text += f"🔢 *VIN/СТС:* 📷 (есть фото)\n"
     
     text += f"👤 *Контакт:* {data['contact_name']}, {data['contact_phone']}\n\n🔧 *ЗАПЧАСТИ:*"
     
@@ -427,6 +442,9 @@ async def show_summary(update: Update, context: CallbackContext):
 
 async def handle_confirmation(update: Update, context: CallbackContext):
     """Обработка подтверждения заказа"""
+    logger.info(f"🔍 Обработка подтверждения: {update.message.text}")
+    logger.info(f"🔍 Данные пользователя: {context.user_data}")
+    
     if update.message.text == '🚀 Отправить заявку':
         # Останавливаем напоминания
         user_id = update.effective_user.id
@@ -437,6 +455,7 @@ async def handle_confirmation(update: Update, context: CallbackContext):
         
         # Создаем ID заявки
         order_id = int(datetime.now().timestamp())
+        logger.info(f"🔍 Создан order_id: {order_id}")
         
         try:
             # Отправляем уведомление администратору
@@ -444,13 +463,16 @@ async def handle_confirmation(update: Update, context: CallbackContext):
             admin_text += f"📍 Город: {context.user_data['city']}\n"
             admin_text += f"🚗 Авто: {context.user_data['car_brand']} {context.user_data['car_model']} {context.user_data['car_year']}\n"
             
+            # Двигатель
+            if context.user_data.get('engine_volume') and context.user_data.get('fuel_type'):
+                admin_text += f"⚙️ Двигатель: {context.user_data['engine_volume']} {context.user_data['fuel_type']}\n"
+            
+            # VIN/СТС
             if not context.user_data.get('vin_skipped', True):
                 if context.user_data.get('vin_text'):
-                    admin_text += f"🔢 вин/стс: {context.user_data['vin_text']}\n"
+                    admin_text += f"🔢 VIN/СТС: {context.user_data['vin_text']}\n"
                 elif context.user_data.get('vin_photo'):
-                    admin_text += f"🔢 вин/стс: 📷 (фото ниже)\n"
-            else:
-                admin_text += f"⚙️ Двигатель: {context.user_data.get('engine_volume', '')} {context.user_data.get('fuel_type', '')}\n"
+                    admin_text += f"🔢 VIN/СТС: 📷 (фото ниже)\n"
             
             admin_text += f"👤 Клиент: {context.user_data['contact_name']}\n"
             admin_text += f"📞 Тел: {context.user_data['contact_phone']}\n\n"
@@ -463,16 +485,20 @@ async def handle_confirmation(update: Update, context: CallbackContext):
                 if part.get('photo'):
                     admin_text += " 📷"
             
+            logger.info(f"🔍 Отправляем администратору: {admin_text}")
+            
             # Отправляем текст администратору
             await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text)
+            logger.info("✅ Сообщение администратору отправлено")
             
             # Пересылаем фото вин/стс если есть
             if context.user_data.get('vin_photo'):
                 await context.bot.send_photo(
                     chat_id=ADMIN_CHAT_ID,
                     photo=context.user_data['vin_photo'],
-                    caption=f"🆔 Фото вин/стс для заявки #{order_id}"
+                    caption=f"🆔 Фото VIN/СТС для заявки #{order_id}"
                 )
+                logger.info("✅ Фото VIN отправлено")
             
             # Пересылаем фото запчастей если есть
             for i, part in enumerate(context.user_data['parts'], 1):
@@ -482,15 +508,17 @@ async def handle_confirmation(update: Update, context: CallbackContext):
                         photo=part['photo'],
                         caption=f"🔧 Фото запчасти для заявки #{order_id}\n{part['name']}"
                     )
+                    logger.info(f"✅ Фото запчасти {i} отправлено")
             
             await update.message.reply_text(
                 f"🎉 *ЗАЯВКА #{order_id} ПРИНЯТА!*\n\n✅ Менеджер свяжется с вами в ближайшее время!", 
                 parse_mode='Markdown', 
                 reply_markup=ReplyKeyboardRemove()
             )
+            logger.info("✅ Пользователю отправлено подтверждение")
                     
         except Exception as e:
-            logger.error(f"Ошибка отправки заявки: {e}")
+            logger.error(f"❌ Ошибка отправки заявки: {e}", exc_info=True)
             await update.message.reply_text("❌ Ошибка отправки заявки. Попробуйте позже.")
         
         return ConversationHandler.END
@@ -597,97 +625,103 @@ def main():
         logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
         return
     
-    # Создаем Application
-    application = Application.builder().token(BOT_TOKEN).build()
+    logger.info(f"🔍 ADMIN_CHAT_ID: {ADMIN_CHAT_ID}")
     
-    # Настраиваем обработчики
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            CITY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_city),
+    try:
+        # Создаем Application
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Настраиваем обработчики
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                CITY: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_city),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                CAR_BRAND: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_brand),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                CAR_MODEL: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_model),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                CAR_YEAR: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_year),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                VIN_OR_STS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_vin_choice),
+                    MessageHandler(filters.PHOTO, handle_vin_photo),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                VIN_TEXT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_vin_text),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                ENGINE_VOLUME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_engine_volume),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                ENGINE_FUEL: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel_type),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                PART_MAIN: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_main),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                PART_REFINEMENT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_refinement),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                PART_SPECIFICS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_specifics),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                PART_PHOTO: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_photo),
+                    MessageHandler(filters.PHOTO, handle_part_photo),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                MORE_PARTS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_more_parts),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                CONTACT_INFO: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, get_contact_info),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                CONFIRMATION: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+                EDIT_CHOICE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_choice),
+                    MessageHandler(filters.ALL, fallback_handler)
+                ],
+            },
+            fallbacks=[
+                CommandHandler('start', start),
+                CommandHandler('cancel', cancel),
                 MessageHandler(filters.ALL, fallback_handler)
             ],
-            CAR_BRAND: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_brand),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            CAR_MODEL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_model),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            CAR_YEAR: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_car_year),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            VIN_OR_STS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_vin_choice),
-                MessageHandler(filters.PHOTO, handle_vin_photo),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            VIN_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_vin_text),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            ENGINE_VOLUME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_engine_volume),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            ENGINE_FUEL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_fuel_type),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            PART_MAIN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_main),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            PART_REFINEMENT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_refinement),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            PART_SPECIFICS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_part_specifics),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            PART_PHOTO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_part_photo),
-                MessageHandler(filters.PHOTO, handle_part_photo),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            MORE_PARTS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_more_parts),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            CONTACT_INFO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_contact_info),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            CONFIRMATION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-            EDIT_CHOICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_choice),
-                MessageHandler(filters.ALL, fallback_handler)
-            ],
-        },
-        fallbacks=[
-            CommandHandler('start', start),
-            CommandHandler('cancel', cancel),
-            MessageHandler(filters.ALL, fallback_handler)
-        ],
-        allow_reentry=True
-    )
+            allow_reentry=True
+        )
+        
+        application.add_handler(conv_handler)
+        application.add_error_handler(error_handler)
+        
+        # Добавляем глобальный обработчик команды /start
+        application.add_handler(CommandHandler("start", start))
+        
+        # Запускаем бота
+        logger.info("🤖 Бот 'АвтоЗапчасти 24/7' запущен...")
+        application.run_polling()
     
-    application.add_handler(conv_handler)
-    application.add_error_handler(error_handler)
-    
-    # Добавляем глобальный обработчик команды /start
-    application.add_handler(CommandHandler("start", start))
-    
-    # Запускаем бота
-    logger.info("🤖 Бот 'АвтоЗапчасти 24/7' запущен...")
-    application.run_polling()
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка при запуске бота: {e}", exc_info=True)
 
 if __name__ == '__main__':
     main()
