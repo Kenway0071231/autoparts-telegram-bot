@@ -1,7 +1,8 @@
 import logging
 import os
 import re
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (Application, CommandHandler, MessageHandler, 
                          ConversationHandler, CallbackContext, ContextTypes)
@@ -27,12 +28,15 @@ ADMIN_CHAT_ID = "1079922982"
  PART_MAIN, PART_REFINEMENT, PART_SPECIFICS, PART_PHOTO, MORE_PARTS, 
  CONTACT_INFO, CONFIRMATION, EDIT_CHOICE) = range(16)
 
+# Хранилище для напоминаний
+user_reminders = {}
+
 class Database:
     def save_order(self, order_data):
+        # Теперь просто логируем, без сохранения на сервере
         try:
             order_data['order_id'] = int(datetime.now().timestamp())
             order_data['created_at'] = datetime.now().isoformat()
-            order_data['status'] = 'new'
             
             # Логируем заказ
             logger.info(f"📦 НОВЫЙ ЗАКАЗ #{order_data['order_id']}")
@@ -45,7 +49,7 @@ class Database:
                 elif order_data.get('vin_photo'):
                     logger.info(f"🔢 ВИН/СТС: 📷 (есть фото)")
             else:
-                logger.info(f"⚙️ Двигатель: {order_data.get('engine_volume', '')} {order_data.get('fuel_type', '')}")
+                logger.info(f"⚙️ Двигатель: {data.get('engine_volume', '')} {data.get('fuel_type', '')}")
             
             logger.info(f"👤 Контакт: {order_data['contact_name']} {order_data['contact_phone']}")
             logger.info(f"🔧 Запчасти: {len(order_data['parts'])} шт.")
@@ -63,6 +67,13 @@ class Database:
 db = Database()
 
 async def start(update: Update, context: CallbackContext):
+    # Останавливаем все напоминания для этого пользователя
+    user_id = update.effective_user.id
+    if user_id in user_reminders:
+        for task in user_reminders[user_id]:
+            task.cancel()
+        del user_reminders[user_id]
+    
     context.user_data.clear()
     
     welcome_text = """
@@ -74,7 +85,46 @@ async def start(update: Update, context: CallbackContext):
 *Давайте начнем! Из какого вы города?*
     """
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    
+    # Запускаем напоминания
+    await schedule_reminders(update, context)
+    
     return CITY
+
+async def schedule_reminders(update: Update, context: CallbackContext):
+    """Запланировать напоминания для пользователя"""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    if user_id not in user_reminders:
+        user_reminders[user_id] = []
+    
+    # Напоминание через 30 минут
+    task_30min = asyncio.create_task(
+        send_reminder(context, user_id, chat_id, 30*60, "⏰ Напоминаем о незавершенной заявке на автозапчасти! Продолжите оформление, чтобы мы могли помочь вам найти нужные детали.")
+    )
+    
+    # Напоминание через 6 часов
+    task_6hours = asyncio.create_task(
+        send_reminder(context, user_id, chat_id, 6*60*60, "🕒 Вы начали оформлять заявку на запчасти 6 часов назад. Завершите оформление, чтобы получить детали быстрее!")
+    )
+    
+    # Напоминание через 12 часов
+    task_12hours = asyncio.create_task(
+        send_reminder(context, user_id, chat_id, 12*60*60, "📅 Прошло 12 часов с момента начала оформления заявки. Это последнее напоминание - завершите заявку для получения помощи!")
+    )
+    
+    user_reminders[user_id].extend([task_30min, task_6hours, task_12hours])
+
+async def send_reminder(context: CallbackContext, user_id: int, chat_id: int, delay: int, message: str):
+    """Отправить напоминание пользователю"""
+    try:
+        await asyncio.sleep(delay)
+        # Проверяем, не завершил ли пользователь заявку
+        if user_id in user_reminders:
+            await context.bot.send_message(chat_id=chat_id, text=message)
+    except Exception as e:
+        logger.error(f"Ошибка отправки напоминания: {e}")
 
 async def get_city(update: Update, context: CallbackContext):
     context.user_data['city'] = update.message.text
@@ -380,15 +430,18 @@ async def show_summary(update: Update, context: CallbackContext):
 
 async def handle_confirmation(update: Update, context: CallbackContext):
     if update.message.text == '🚀 Отправить заявку':
-        order_id = db.save_order(context.user_data)
-        if order_id:
-            await update.message.reply_text(
-                f"🎉 *ЗАЯВКА #{order_id} ПРИНЯТА!*\n\n✅ Менеджер свяжется с вами в ближайшее время!", 
-                parse_mode='Markdown', 
-                reply_markup=ReplyKeyboardRemove()
-            )
-            
-            # Отправка уведомления администратору
+        # Останавливаем напоминания
+        user_id = update.effective_user.id
+        if user_id in user_reminders:
+            for task in user_reminders[user_id]:
+                task.cancel()
+            del user_reminders[user_id]
+        
+        # Создаем ID заявки
+        order_id = int(datetime.now().timestamp())
+        
+        try:
+            # Отправляем уведомление администратору
             admin_text = f"🚨 НОВАЯ ЗАЯВКА #{order_id}\n"
             admin_text += f"📍 Город: {context.user_data['city']}\n"
             admin_text += f"🚗 Авто: {context.user_data['car_brand']} {context.user_data['car_model']} {context.user_data['car_year']}\n"
@@ -431,9 +484,17 @@ async def handle_confirmation(update: Update, context: CallbackContext):
                         photo=part['photo'],
                         caption=f"🔧 Фото запчасти для заявки #{order_id}\n{part['name']}"
                     )
+            
+            await update.message.reply_text(
+                f"🎉 *ЗАЯВКА #{order_id} ПРИНЯТА!*\n\n✅ Менеджер свяжется с вами в ближайшее время!", 
+                parse_mode='Markdown', 
+                reply_markup=ReplyKeyboardRemove()
+            )
                     
-        else:
-            await update.message.reply_text("❌ Ошибка сохранения. Попробуйте позже.")
+        except Exception as e:
+            logger.error(f"Ошибка отправки заявки: {e}")
+            await update.message.reply_text("❌ Ошибка отправки заявки. Попробуйте позже.")
+        
         return ConversationHandler.END
     else:  # Исправить
         keyboard = [
@@ -500,7 +561,14 @@ async def handle_edit_choice(update: Update, context: CallbackContext):
         return CONTACT_INFO
 
 async def cancel(update: Update, context: CallbackContext):
-    await update.message.reply_text("Диалог прерван. Напишите /start", reply_markup=ReplyKeyboardRemove())
+    # Останавливаем напоминания
+    user_id = update.effective_user.id
+    if user_id in user_reminders:
+        for task in user_reminders[user_id]:
+            task.cancel()
+        del user_reminders[user_id]
+    
+    await update.message.reply_text("Диалог прерван. Напишите /start для начала нового заказа", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 async def error_handler(update: Update, context: CallbackContext):
@@ -542,7 +610,10 @@ def main():
             CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation)],
             EDIT_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_choice)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)]
+        fallbacks=[
+            CommandHandler('start', start),
+            CommandHandler('cancel', cancel)
+        ]
     )
     
     application.add_handler(conv_handler)
