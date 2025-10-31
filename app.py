@@ -49,7 +49,8 @@ class Database:
                 elif order_data.get('vin_photo'):
                     logger.info(f"🔢 ВИН/СТС: 📷 (есть фото)")
             else:
-                logger.info(f"⚙️ Двигатель: {data.get('engine_volume', '')} {data.get('fuel_type', '')}")
+                # ИСПРАВЛЕНО: было data, теперь order_data
+                logger.info(f"⚙️ Двигатель: {order_data.get('engine_volume', '')} {order_data.get('fuel_type', '')}")
             
             logger.info(f"👤 Контакт: {order_data['contact_name']} {order_data['contact_phone']}")
             logger.info(f"🔧 Запчасти: {len(order_data['parts'])} шт.")
